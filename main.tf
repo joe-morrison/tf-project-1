@@ -131,12 +131,29 @@ resource "aws_instance" "webserver1" {
   key_name                    = aws_key_pair.kp.key_name
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.webinstance.id]
-  user_data                   = <<-EOF
+
+  user_data = <<-EOF
     #!/bin/bash
     sudo apt install apache2 -y
+    sudo chmod -R 777 /var/www/html
     EOF
 
   user_data_replace_on_change = true
+
+  provisioner "remote-exec" {
+    inline = ["echo 'Wait until SSH is ready'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(local_file.ssh_key.filename)
+      host        = aws_instance.webserver1.public_ip
+    }
+  }
+  provisioner "local-exec" {
+    command = "sleep 30;sudo scp -i ${local_file.ssh_key.filename} -r ../../robot-shop-web/* ubuntu@${aws_instance.webserver1.public_ip}:/var/www/html"
+  }
+
   tags = {
     Name        = "Webserver 1"
     Environment = "DEV"
@@ -152,12 +169,30 @@ resource "aws_instance" "webserver2" {
   key_name                    = aws_key_pair.kp.key_name
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.webinstance.id]
-  user_data                   = <<-EOF
+
+  user_data = <<-EOF
     #!/bin/bash
     sudo apt install apache2 -y
+    sudo chmod -R 777 /var/www/html
     EOF
-
+  
   user_data_replace_on_change = true
+
+  
+  provisioner "remote-exec" {
+    inline = ["echo 'Wait until SSH is ready'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(local_file.ssh_key.filename)
+      host        = aws_instance.webserver2.public_ip
+    }
+  }
+  provisioner "local-exec" {
+    command = "sleep 30;sudo scp -i ${local_file.ssh_key.filename} -r ../../robot-shop-web/* ubuntu@${aws_instance.webserver2.public_ip}:/var/www/html"
+  }
+
   tags = {
     Name        = "Webserver 2"
     Environment = "DEV"
@@ -170,16 +205,16 @@ resource "aws_security_group" "webinstance" {
   name   = "web"
   vpc_id = aws_vpc.Main.id
   ingress {
-      from_port   = var.server_port
-      to_port     = var.server_port
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+    from_port   = var.server_port
+    to_port     = var.server_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
-      from_port   = 22
-      to_port     = 22
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
   egress {
     from_port   = 0

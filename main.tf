@@ -182,6 +182,8 @@ resource "aws_instance" "bastion" {
     sudo tee /etc/apt/sources.list.d/hashicorp.list
     sudo apt update
     sudo apt-get install terraform
+
+    sudo mkdir /repos;sudo cd /repos;sudo git clone https://github.com/joe-morrison/tf-project-1.git
     
     EOF
 

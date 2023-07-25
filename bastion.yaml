@@ -16,4 +16,5 @@
       synchronize:
         src: ../../robot-shop-web/
         dest: /var/www/html
+    
 

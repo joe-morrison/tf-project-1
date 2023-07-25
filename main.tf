@@ -151,7 +151,7 @@ resource "aws_key_pair" "kp" {
 }
 
 resource "local_file" "ssh_key" {
-  filename = "${aws_key_pair.kp.key_name}.pem"
+  filename = "../${aws_key_pair.kp.key_name}.pem"
   content  = tls_private_key.pk.private_key_pem
 }
 
@@ -183,24 +183,23 @@ resource "aws_instance" "bastion" {
     sudo apt update
     sudo apt-get install terraform
 
+    sudo apt update -y
+    sudo apt install openjdk-17-jre -y
+    java -version
+
+    curl -fsSL https://pkg.jenkins.io/debian/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+    echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+    sudo apt-get update -y
+    sudo apt-get install jenkins -y
+
     sudo mkdir /repos;sudo cd /repos;sudo git clone https://github.com/joe-morrison/tf-project-1.git
     
     EOF
 
   user_data_replace_on_change = true
 
-  provisioner "remote-exec" {
-    inline = ["echo 'Wait until SSH is ready'"]
-
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file(local_file.ssh_key.filename)
-      host        = aws_instance.bastion.public_ip
-    }
-  }
   provisioner "local-exec" {
-    command  = "echo ${aws_instance.bastion.public_ip} > ./bastion;ansible-playbook -i ${aws_instance.bastion.public_ip}, --private-key ${local_file.ssh_key.filename} bastion.yaml"
+    command  = "echo ${aws_instance.bastion.public_ip} > ./bastion"
   }
 
   tags = {  
@@ -211,6 +210,109 @@ resource "aws_instance" "bastion" {
   }
 }
 
+resource "aws_instance" "webserver1" {
+  ami                         = "ami-053b0d53c279acc90"
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.privatesubnet1.id
+  key_name                    = aws_key_pair.kp.key_name
+  associate_public_ip_address = false
+  vpc_security_group_ids      = [aws_security_group.webinstance.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2standard_profile.name
+
+  user_data = <<-EOF
+    #!/bin/bash
+    sudo apt install nginx -y
+    cd /var/www/html
+    sudo git clone https://github.com/joe-morrison/robot-shop-web.git
+    cp -aR robot-shop-web/* .
+    rm -rf robot-shop-web
+    service nginx restart
+    EOF
+
+  user_data_replace_on_change = true
+
+  provisioner "local-exec" {
+    command  = "echo ${aws_instance.webserver1.private_ip} > ./webserver1"
+  }
+
+  tags = {
+    Name        = "Webserver 1"
+    Environment = "DEV"
+    OS          = "UBUNTU"
+    Managed     = "IAC"
+  }
+}
+
+resource "aws_instance" "webserver2" {
+  ami                         = "ami-053b0d53c279acc90"
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.privatesubnet2.id
+  key_name                    = aws_key_pair.kp.key_name
+  associate_public_ip_address = false
+  vpc_security_group_ids      = [aws_security_group.webinstance.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2standard_profile.name
+
+  user_data = <<-EOF
+    #!/bin/bash
+    sudo apt install nginx -y
+    cd /var/www/html
+    sudo git clone https://github.com/joe-morrison/robot-shop-web.git
+    cp -aR robot-shop-web/* .
+    rm -rf robot-shop-web
+    service nginx restart
+    EOF
+
+  user_data_replace_on_change = true
+
+  provisioner "local-exec" {
+    command  = "echo ${aws_instance.webserver2.private_ip} > ./webserver2"
+  }
+
+   tags = {
+    Name        = "Webserver 2"
+    Environment = "DEV"
+    OS          = "UBUNTU"
+    Managed     = "IAC"
+  }
+}
+
+resource "aws_alb" "robotshop-alb" {
+  name               = "robotshop-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.robotshop_lb_sg.id]
+  subnets            = [aws_subnet.publicsubnet1.id,aws_subnet.publicsubnet2.id]
+}
+
+resource "aws_alb_listener" "web" {
+  load_balancer_arn = aws_alb.robotshop-alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_alb_target_group.robotshop-tg.arn
+  }
+}
+
+resource "aws_alb_target_group" "robotshop-tg" {
+  name     = "robotshop-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.Main.id
+}
+
+resource "aws_alb_target_group_attachment" "webserver1" {
+  target_group_arn = aws_alb_target_group.robotshop-tg.arn
+  target_id        = aws_instance.webserver1.id
+  port             = 80
+}
+
+resource "aws_alb_target_group_attachment" "webserver2" {
+  target_group_arn = aws_alb_target_group.robotshop-tg.arn
+  target_id        = aws_instance.webserver2.id
+  port             = 80
+}
 
 #********************************************************* SG **************************************
 resource "aws_security_group" "bastion_sg" {
@@ -222,6 +324,47 @@ resource "aws_security_group" "bastion_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "webinstance" {
+  name   = "web"
+  vpc_id = aws_vpc.Main.id
+  ingress {
+    from_port   = var.server_port
+    to_port     = var.server_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "robotshop_lb_sg" {
+  name   = "robotshop_lb_sg"
+  vpc_id = aws_vpc.Main.id
+  ingress {
+    from_port   = var.server_port
+    to_port     = var.server_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

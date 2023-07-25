@@ -31,8 +31,8 @@ resource "aws_iam_role_policy_attachment" "ec2ssm_policy" {
   role       = aws_iam_role.ec2standard_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
-
 #*********************************************************  VPC **************************************
+
 resource "aws_vpc" "Main" {            # Creating VPC here
   cidr_block       = var.main_vpc_cidr # Defining the CIDR block use 10.0.0.0/24 for demo
   instance_tenancy = "default"
@@ -151,7 +151,7 @@ resource "aws_key_pair" "kp" {
 }
 
 resource "local_file" "ssh_key" {
-  filename = "../${aws_key_pair.kp.key_name}.pem"
+  filename = "${aws_key_pair.kp.key_name}.pem"
   content  = tls_private_key.pk.private_key_pem
 }
 
@@ -161,45 +161,28 @@ resource "aws_instance" "bastion" {
   subnet_id                   = aws_subnet.publicsubnet1.id
   key_name                    = aws_key_pair.kp.key_name
   associate_public_ip_address = true
-  vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
+  vpc_security_group_ids      = [aws_security_group.webinstance.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2standard_profile.name
 
   user_data = <<-EOF
     #!/bin/bash
- 
-    sudo apt update -y
-
-    sudo apt install git
-
-    sudo apt install software-properties-common -y
-    sudo add-apt-repository --yes --update ppa:ansible/ansible -y
-    sudo apt install ansible -y
-
-    sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
-    wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    gpg --no-default-keyring --keyring /usr/share/keyrings/hashicorp-archive-keyring.gpg --fingerprint
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
-    sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt update
-    sudo apt-get install terraform
-
-    sudo apt update -y
-    sudo apt install openjdk-17-jre -y
-    java -version
-
-    curl -fsSL https://pkg.jenkins.io/debian/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-    echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-    sudo apt-get update -y
-    sudo apt-get install jenkins -y
-
-    sudo mkdir /repos;sudo cd /repos;sudo git clone https://github.com/joe-morrison/tf-project-1.git
-    
+    echo  
     EOF
 
   user_data_replace_on_change = true
 
+  provisioner "remote-exec" {
+    inline = ["echo 'Wait until SSH is ready'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(local_file.ssh_key.filename)
+      host        = aws_instance.webserver2.public_ip
+    }
+  }
   provisioner "local-exec" {
-    command  = "echo ${aws_instance.bastion.public_ip} > ./bastion;cat /var/lib/jenkins/secrets/initialAdminPassword >> ./bastion"
+    command  = "echo ${aws_instance.webserver2.public_ip} > ./bastion;ansible-playbook -i ${aws_instance.bastion.public_ip}, --private-key ${local_file.ssh_key.filename} bastion.yaml"
   }
 
   tags = {  
@@ -221,18 +204,23 @@ resource "aws_instance" "webserver1" {
 
   user_data = <<-EOF
     #!/bin/bash
-    sudo apt install nginx -y
-    cd /var/www/html
-    sudo git clone https://github.com/joe-morrison/robot-shop-web.git
-    cp -aR robot-shop-web/* .
-    rm -rf robot-shop-web
-    service nginx restart
+    echo
     EOF
 
   user_data_replace_on_change = true
 
+  provisioner "remote-exec" {
+    inline = ["echo 'Wait until SSH is ready'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(local_file.ssh_key.filename)
+      host        = aws_instance.webserver1.public_ip
+    }
+  }
   provisioner "local-exec" {
-    command  = "echo ${aws_instance.webserver1.private_ip} > ./webserver1"
+    command  = "echo ${aws_instance.webserver1.public_ip} > ./host1;ansible-playbook -i ${aws_instance.webserver1.public_ip}, --private-key ${local_file.ssh_key.filename} nginx.yaml"
   }
 
   tags = {
@@ -254,27 +242,34 @@ resource "aws_instance" "webserver2" {
 
   user_data = <<-EOF
     #!/bin/bash
-    sudo apt install nginx -y
-    cd /var/www/html
-    sudo git clone https://github.com/joe-morrison/robot-shop-web.git
-    cp -aR robot-shop-web/* .
-    rm -rf robot-shop-web
-    service nginx restart
+    echo  
     EOF
 
   user_data_replace_on_change = true
 
+  provisioner "remote-exec" {
+    inline = ["echo 'Wait until SSH is ready'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(local_file.ssh_key.filename)
+      host        = aws_instance.webserver2.public_ip
+    }
+  }
   provisioner "local-exec" {
-    command  = "echo ${aws_instance.webserver2.private_ip} > ./webserver2"
+    command  = "echo ${aws_instance.webserver2.public_ip} > ./host2;ansible-playbook -i ${aws_instance.webserver2.public_ip}, --private-key ${local_file.ssh_key.filename} nginx.yaml"
   }
 
-   tags = {
+  tags = {
     Name        = "Webserver 2"
     Environment = "DEV"
     OS          = "UBUNTU"
     Managed     = "IAC"
   }
 }
+
+
 
 resource "aws_alb" "robotshop-alb" {
   name               = "robotshop-alb"
@@ -294,7 +289,6 @@ resource "aws_alb_listener" "web" {
     target_group_arn = aws_alb_target_group.robotshop-tg.arn
   }
 }
-
 resource "aws_alb_target_group" "robotshop-tg" {
   name     = "robotshop-tg"
   port     = 80
@@ -313,31 +307,7 @@ resource "aws_alb_target_group_attachment" "webserver2" {
   target_id        = aws_instance.webserver2.id
   port             = 80
 }
-
 #********************************************************* SG **************************************
-resource "aws_security_group" "bastion_sg" {
-  name   = "bastion_sg"
-  vpc_id = aws_vpc.Main.id
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["165.0.129.212/32"]
-  }
-    ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["165.0.129.212/32"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
 resource "aws_security_group" "webinstance" {
   name   = "web"
   vpc_id = aws_vpc.Main.id

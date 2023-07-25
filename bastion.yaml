@@ -1,0 +1,20 @@
+---
+- name: Install Tools
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+
+  tasks:
+    - name: ensure nginx is at the latest version
+      apt: name=nginx state=latest
+    - name: "start nginx"
+      service: 
+          name: nginx
+          state: started
+
+    - name: copy robot shop web files to web instance
+      synchronize:
+        src: ../../robot-shop-web/
+        dest: /var/www/html
+    
+

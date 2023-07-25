@@ -199,7 +199,7 @@ resource "aws_instance" "bastion" {
   user_data_replace_on_change = true
 
   provisioner "local-exec" {
-    command  = "echo ${aws_instance.bastion.public_ip} > ./bastion"
+    command  = "echo ${aws_instance.bastion.public_ip} > ./bastion;cat /var/lib/jenkins/secrets/initialAdminPassword >> ./bastion"
   }
 
   tags = {  
@@ -322,7 +322,13 @@ resource "aws_security_group" "bastion_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["165.0.129.212/32"]
+  }
+    ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["165.0.129.212/32"]
   }
   egress {
     from_port   = 0
